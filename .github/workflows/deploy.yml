@@ -1,0 +1,47 @@
+name: Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'Deployment phase'
+        required: false
+        default: 'deploy'
+        type: string
+      pipeline_run_id:
+        description: 'Pipeline run ID'
+        required: false
+        default: ''
+        type: string
+      image_tag:
+        description: 'Image tag'
+        required: false
+        default: 'latest'
+        type: string
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Package artifact
+        run: |
+          mkdir -p /tmp/artifact
+          tar -czf /tmp/artifact/app.tar.gz --exclude=.git .
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::942049393866:role/github-actions-deployer
+          aws-region: ap-south-1
+
+      - name: Upload artifact to S3
+        run: |
+          aws s3 cp /tmp/artifact/app.tar.gz s3://abaxys-deployss/artifacts/yinatra-python/${{ github.sha }}.tar.gz
+          aws s3 cp /tmp/artifact/app.tar.gz s3://abaxys-deployss/artifacts/yinatra-python/manual.tar.gz
+          echo "Uploaded successfully"

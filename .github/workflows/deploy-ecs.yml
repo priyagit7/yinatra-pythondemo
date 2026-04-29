@@ -1,0 +1,127 @@
+name: Build and Deploy to ECS Fargate
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: 'Deployment phase'
+        required: false
+        default: 'build'
+        type: string
+      pipeline_run_id:
+        description: 'Yinatra pipeline run ID'
+        required: false
+        default: ''
+        type: string
+      image_tag:
+        description: 'Docker image tag'
+        required: false
+        default: ''
+        type: string
+      ecs_cluster:
+        description: 'ECS cluster name'
+        required: false
+        default: ''
+        type: string
+      ecs_service:
+        description: 'ECS service name'
+        required: false
+        default: ''
+        type: string
+      aws_account_id:
+        description: 'AWS account ID'
+        required: false
+        default: ''
+        type: string
+      aws_region:
+        description: 'AWS region'
+        required: false
+        default: ''
+        type: string
+      ecr_repository:
+        description: 'ECR repository name'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: 942049393866
+  ECR_REPOSITORY: provision-ecrrepository
+  ECS_CLUSTER: provision-cluster
+  ECS_SERVICE: ''
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Apply Yinatra dispatch overrides
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          [ -n "${{ inputs.ecs_cluster }}" ] && echo "ECS_CLUSTER=${{ inputs.ecs_cluster }}" >> $GITHUB_ENV || true
+          [ -n "${{ inputs.ecs_service }}" ] && echo "ECS_SERVICE=${{ inputs.ecs_service }}" >> $GITHUB_ENV || true
+          [ -n "${{ inputs.aws_account_id }}" ] && echo "AWS_ACCOUNT_ID=${{ inputs.aws_account_id }}" >> $GITHUB_ENV || true
+          [ -n "${{ inputs.aws_region }}" ] && echo "AWS_REGION=${{ inputs.aws_region }}" >> $GITHUB_ENV || true
+          [ -n "${{ inputs.ecr_repository }}" ] && echo "ECR_REPOSITORY=${{ inputs.ecr_repository }}" >> $GITHUB_ENV || true
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::942049393866:role/github-actions-deployer
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag and URI
+        run: |
+          TAG="${{ inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_SHA:0:7}"
+          fi
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+          echo "IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$TAG" >> $GITHUB_ENV
+
+      - name: Build and push Docker image
+        if: ${{ inputs.phase != 'deploy' }}
+        run: |
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          echo "Pushed: $IMAGE_URI"
+
+      - name: Update ECS task definition and service
+        if: ${{ env.ECS_SERVICE != '' }}
+        run: |
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER --services $ECS_SERVICE \
+            --query 'services[0].taskDefinition' --output text)
+          NEW_TASK=$(aws ecs describe-task-definition \
+            --task-definition $TASK_DEF_ARN \
+            --query 'taskDefinition' --output json | \
+            jq --arg IMG "$IMAGE_URI" \
+            'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions[0].image = $IMG')
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --task-definition "$NEW_ARN"
+          echo "Updated ECS service"
+
+      - name: Wait for ECS service to stabilize
+        if: ${{ env.ECS_SERVICE != '' }}
+        run: |
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE
+          echo "ECS service is stable"

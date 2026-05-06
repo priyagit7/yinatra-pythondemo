@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Package artifact
         run: |
@@ -38,13 +38,15 @@ jobs:
           tar -czf /tmp/artifact/app.tar.gz --exclude=.git .
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::942049393866:role/github-actions-deployer
           aws-region: ap-south-1
 
       - name: Upload artifact to S3
         run: |
-          aws s3 cp /tmp/artifact/app.tar.gz s3://abaxys-deployss/artifacts/yinatra-python-pm2/${{ github.sha }}.tar.gz
-          aws s3 cp /tmp/artifact/app.tar.gz s3://abaxys-deployss/artifacts/yinatra-python-pm2/manual.tar.gz
-          echo "Uploaded successfully to yinatra-python-pm2"
+          aws s3 cp /tmp/artifact/app.tar.gz \
+            s3://abaxys-deployss/artifacts/yinatra-python-pm2/${{ github.sha }}.tar.gz
+          aws s3 cp /tmp/artifact/app.tar.gz \
+            s3://abaxys-deployss/artifacts/yinatra-python-pm2/latest.tar.gz
+          echo "Uploaded successfully"

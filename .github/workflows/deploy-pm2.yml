@@ -20,10 +20,41 @@ on:
         required: false
         default: 'latest'
         type: string
+      ecs_cluster:
+        description: 'ECS cluster name'
+        required: false
+        default: ''
+        type: string
+      ecs_service:
+        description: 'ECS service name'
+        required: false
+        default: ''
+        type: string
+      aws_account_id:
+        description: 'AWS account ID'
+        required: false
+        default: ''
+        type: string
+      aws_region:
+        description: 'AWS region'
+        required: false
+        default: ''
+        type: string
+      ecr_repository:
+        description: 'ECR repository name'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   id-token: write
   contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: "942049393866"
+  S3_BUCKET: abaxys-deployss
+  S3_PREFIX: artifacts/yinatra-python-pm2
 
 jobs:
   build-and-upload:
@@ -32,21 +63,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Apply Yinatra overrides
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          [ -n "${{ inputs.aws_account_id }}" ] && echo "AWS_ACCOUNT_ID=${{ inputs.aws_account_id }}" >> $GITHUB_ENV || true
+          [ -n "${{ inputs.aws_region }}" ] && echo "AWS_REGION=${{ inputs.aws_region }}" >> $GITHUB_ENV || true
+
       - name: Package artifact
         run: |
           mkdir -p /tmp/artifact
           tar -czf /tmp/artifact/app.tar.gz --exclude=.git .
+          echo "✅ Packaged"
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::942049393866:role/github-actions-deployer
-          aws-region: ap-south-1
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-actions-deployer
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Upload artifact to S3
         run: |
           aws s3 cp /tmp/artifact/app.tar.gz \
-            s3://abaxys-deployss/artifacts/yinatra-python-pm2/${{ github.sha }}.tar.gz
+            s3://$S3_BUCKET/$S3_PREFIX/${{ github.sha }}.tar.gz
           aws s3 cp /tmp/artifact/app.tar.gz \
-            s3://abaxys-deployss/artifacts/yinatra-python-pm2/latest.tar.gz
-          echo "Uploaded successfully"
+            s3://$S3_BUCKET/$S3_PREFIX/manual.tar.gz
+          echo "✅ Uploaded to S3"
